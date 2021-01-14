@@ -1,0 +1,2 @@
+# WebSocketCraft
+Minecraft Proxy WebSocket
