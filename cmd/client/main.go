@@ -5,12 +5,11 @@ import (
 	"log"
 	"net"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
-
-var upgrader = websocket.Upgrader{}
 
 
 
@@ -24,62 +23,63 @@ func readTCP (c net.Conn) ([]byte, error) {
 }
 
 func proxy(mc net.Conn, proxyCh chan<- bool, address string, scheme string, path string) {
-	alive := true
 	u := url.URL{Scheme: scheme, Host: address, Path: path}
 	c, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
 	if err != nil {
-		log.Fatal("dial:", err)
-		c.Close()
+		log.Printf("dial: %v", err)
 		proxyCh <- false
 		return
 	}
-	doneCh := make(chan bool)
+
+	resultCh := make(chan bool, 2)
+	var wg sync.WaitGroup
+	wg.Add(2)
+
 	go func(mc net.Conn, c *websocket.Conn) {
+		defer wg.Done()
 		for {
 			_, message, err := c.ReadMessage()
 			if err != nil {
-				log.Print("Error, ", err)
-				alive = false
-				break
+				log.Printf("websocket read error: %v", err)
+				resultCh <- false
+				return
 			}
-			mc.Write(message)
+			if _, err := mc.Write(message); err != nil {
+				log.Printf("write to minecraft error: %v", err)
+				resultCh <- true
+				return
+			}
 		}
-		doneCh <- false
-		return
 	}(mc, c)
+
 	go func(mc net.Conn, c *websocket.Conn) {
+		defer wg.Done()
 		for {
-			if !alive {
-				break
-			}
 			message, err := readTCP(mc)
 			if err != nil {
-				log.Print("Error readTCP, ", err)
-				break
+				log.Printf("read from minecraft error: %v", err)
+				resultCh <- true
+				return
 			}
-			if !alive {
-				break
-			}
-			log.Print(message)
-			err = c.WriteMessage(websocket.BinaryMessage, message)
-			if err != nil {
-				log.Print("Error Write WS, ", err)
+			if err := c.WriteMessage(websocket.BinaryMessage, message); err != nil {
+				log.Printf("websocket write error: %v", err)
+				resultCh <- false
+				return
 			}
 		}
-		doneCh <- true
-		return
 	}(mc, c)
-	if <-doneCh {
+
+	status := <-resultCh
+	c.Close()
+	wg.Wait()
+
+	if status {
 		mc.Close()
-		c.Close()
-		<-doneCh
 		proxyCh <- true
-	} else {
-		c.Close()
-		log.Print("WebSocket Close")
-		proxyCh <- false
+		return
 	}
-	return
+
+	proxyCh <- false
 }
 
 func main () {

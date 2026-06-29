@@ -4,7 +4,7 @@
 
 Minecraft Proxy WebSocket
 
-自動再接続はまだ行なえません
+WebSocket切断後もMinecraft接続を維持しながら再接続を試みます。
 
 minecraft <-> client <-> cloudflare <-> nginx <-> server <-> spigot
 で動作することは確認しました
